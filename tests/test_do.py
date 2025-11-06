@@ -402,3 +402,176 @@ class TestMainEntryPoint:
 
         # Should call the cyclopts app
         mock_app.assert_called_once()
+
+
+class TestParseDefaultMetadata:
+    """Test the _parse_default_metadata() function."""
+
+    def test_empty_string(self):
+        """Test parsing empty string returns empty dict."""
+        from dolist.do import _parse_default_metadata
+
+        result = _parse_default_metadata("")
+        assert result == {}
+
+    def test_none_input(self):
+        """Test parsing None returns empty dict."""
+        from dolist.do import _parse_default_metadata
+
+        result = _parse_default_metadata(None)
+        assert result == {}
+
+    def test_single_field(self):
+        """Test parsing single field."""
+        from dolist.do import _parse_default_metadata
+
+        result = _parse_default_metadata("tag=work")
+        assert result == {"tag": "work"}
+
+    def test_priority_conversion(self):
+        """Test that priority is converted to int."""
+        from dolist.do import _parse_default_metadata
+
+        result = _parse_default_metadata("priority=5")
+        assert result == {"priority": 5}
+
+    def test_size_normalization(self):
+        """Test that size values are normalized."""
+        from dolist.do import _parse_default_metadata
+
+        # Test uppercase letters
+        result = _parse_default_metadata("size=L")
+        assert result == {"size": "L"}
+
+        # Test full words
+        result = _parse_default_metadata("size=Small")
+        assert result == {"size": "S"}
+
+        result = _parse_default_metadata("size=Medium")
+        assert result == {"size": "M"}
+
+        result = _parse_default_metadata("size=Large")
+        assert result == {"size": "L"}
+
+    def test_multi_word_reminder(self):
+        """Test that reminder values can contain spaces."""
+        from dolist.do import _parse_default_metadata
+
+        result = _parse_default_metadata("reminder=3 days")
+        assert result == {"reminder": "3 days"}
+
+        result = _parse_default_metadata("reminder=next week")
+        assert result == {"reminder": "next week"}
+
+    def test_multiple_fields(self):
+        """Test parsing multiple fields."""
+        from dolist.do import _parse_default_metadata
+
+        result = _parse_default_metadata("tag=work priority=5 size=L")
+        assert result == {"tag": "work", "priority": 5, "size": "L"}
+
+    def test_complex_default_string(self):
+        """Test parsing a complex default string with all fields."""
+        from dolist.do import _parse_default_metadata
+
+        result = _parse_default_metadata(
+            "tag=foo priority=5 reminder=3 days size=L status=in-progress"
+        )
+        assert result == {
+            "tag": "foo",
+            "priority": 5,
+            "reminder": "3 days",
+            "size": "L",
+            "status": "in-progress",
+        }
+
+
+class TestImportTasksWithDefaults:
+    """Test the import_tasks() function with default metadata."""
+
+    @patch("dolist.do.init_db")
+    @patch("dolist.do.console")
+    @patch("dolist.do.Path")
+    def test_apply_defaults_to_tasks_without_metadata(
+        self, mock_path_class, mock_console, mock_init_db
+    ):
+        """Test that defaults are applied to tasks without explicit metadata."""
+        import dolist.do
+        from dolist.do import import_tasks
+
+        # Mock file
+        mock_file = Mock()
+        mock_file.exists.return_value = True
+        mock_file.suffix = ".md"
+        mock_file.read_text.return_value = """# Task 1
+
+Description for task 1
+
+# Task 2
+
+Description for task 2
+"""
+        mock_path_class.return_value = mock_file
+
+        # Mock database
+        mock_db = Mock()
+        mock_tasks = Mock()
+        mock_tasks.insert = Mock(side_effect=[1, 2])
+
+        dolist.do.db = mock_db
+        dolist.do.tasks = mock_tasks
+
+        # Import with defaults
+        import_tasks("test.md", use=None, default="tag=work priority=5")
+
+        # Should have inserted 2 tasks
+        assert mock_tasks.insert.call_count == 2
+
+        # Check first task got defaults
+        first_call = mock_tasks.insert.call_args_list[0][1]
+        assert first_call["tag"] == "work"
+        assert first_call["priority"] == 5
+
+        # Check second task got defaults
+        second_call = mock_tasks.insert.call_args_list[1][1]
+        assert second_call["tag"] == "work"
+        assert second_call["priority"] == 5
+
+    @patch("dolist.do.init_db")
+    @patch("dolist.do.console")
+    @patch("dolist.do.Path")
+    def test_explicit_metadata_overrides_defaults(
+        self, mock_path_class, mock_console, mock_init_db
+    ):
+        """Test that explicit metadata in file overrides defaults."""
+        import dolist.do
+        from dolist.do import import_tasks
+
+        # Mock file with explicit metadata
+        mock_file = Mock()
+        mock_file.exists.return_value = True
+        mock_file.suffix = ".md"
+        mock_file.read_text.return_value = """# Task 1
+
+Description
+
+> tag custom
+> priority 7
+"""
+        mock_path_class.return_value = mock_file
+
+        # Mock database
+        mock_db = Mock()
+        mock_tasks = Mock()
+        mock_tasks.insert = Mock(return_value=1)
+
+        dolist.do.db = mock_db
+        dolist.do.tasks = mock_tasks
+
+        # Import with defaults
+        import_tasks("test.md", use=None, default="tag=work priority=5")
+
+        # Task should have explicit metadata, not defaults
+        call_kwargs = mock_tasks.insert.call_args[1]
+        assert call_kwargs["tag"] == "custom"  # From file, not default
+        assert call_kwargs["priority"] == 7  # From file, not default

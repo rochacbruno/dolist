@@ -1715,6 +1715,76 @@ def reset(
         console.print(f"[yellow]Backup is still available at: {backup_path}[/yellow]")
 
 
+def _parse_default_metadata(default_string: str) -> dict:
+    """Parse default metadata string into a dictionary.
+
+    Args:
+        default_string: String like "tag=foo priority=5 reminder=3 days size=L"
+
+    Returns:
+        Dictionary with parsed metadata
+    """
+    defaults = {}
+    if not default_string:
+        return defaults
+
+    # Use a simple state machine to handle multi-word values like "reminder=3 days"
+    tokens = default_string.split()
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+
+        if "=" in token:
+            key, value = token.split("=", 1)
+            key = key.strip()
+
+            # Special handling for reminder (can be multi-word like "3 days")
+            if key == "reminder":
+                # Collect all subsequent tokens that don't contain '='
+                reminder_parts = [value]
+                i += 1
+                while i < len(tokens) and "=" not in tokens[i]:
+                    reminder_parts.append(tokens[i])
+                    i += 1
+                defaults[key] = " ".join(reminder_parts)
+                continue
+
+            # Handle priority (convert to int)
+            elif key == "priority":
+                try:
+                    defaults[key] = int(value)
+                except ValueError:
+                    console.print(
+                        f"[yellow]Warning: Invalid priority value '{value}', ignoring[/yellow]"
+                    )
+
+            # Handle size (normalize)
+            elif key == "size":
+                size_upper = value.upper()
+                if size_upper in ("SMALL", "MEDIUM", "LARGE", "UNDEFINED"):
+                    size_map = {
+                        "SMALL": "S",
+                        "MEDIUM": "M",
+                        "LARGE": "L",
+                        "UNDEFINED": "U",
+                    }
+                    defaults[key] = size_map[size_upper]
+                elif size_upper in ("U", "S", "M", "L"):
+                    defaults[key] = size_upper
+                else:
+                    console.print(
+                        f"[yellow]Warning: Invalid size value '{value}', ignoring[/yellow]"
+                    )
+
+            # Handle other fields (tag, status, etc.)
+            else:
+                defaults[key] = value
+
+        i += 1
+
+    return defaults
+
+
 def _parse_markdown_entry(file_path: Path) -> list[dict]:
     """Parse a markdown file containing task entries.
 
@@ -1863,16 +1933,20 @@ def _parse_markdown_entry(file_path: Path) -> list[dict]:
 def import_tasks(
     filename: str,
     use: Optional[str] = None,
+    default: Optional[str] = None,
 ):
     """Import tasks from a markdown or JSON file.
 
     Args:
         filename: Path to the file to import (.md or .json).
         use: Database name to use (optional).
+        default: Default metadata to apply to all tasks (e.g., "tag=foo priority=5 reminder=3 days size=L").
+                 Only applied to tasks that don't have the specific field set in the file.
 
     Examples:
-        dolist import tasks.md        # Import from markdown
-        dolist import export.json     # Import from JSON
+        dolist import-tasks tasks.md        # Import from markdown
+        dolist import-tasks export.json     # Import from JSON
+        dolist import-tasks tasks.md --default "tag=work priority=3 size=M"  # With defaults
     """
     init_db(use)
 
@@ -1912,6 +1986,11 @@ def import_tasks(
         console.print("[yellow]No tasks found in file[/yellow]")
         return
 
+    # Parse default metadata if provided
+    default_metadata = _parse_default_metadata(default) if default else {}
+    if default_metadata:
+        console.print(f"[cyan]Applying default metadata: {default_metadata}[/cyan]")
+
     # Import tasks
     created_count = 0
     updated_count = 0
@@ -1921,6 +2000,23 @@ def import_tasks(
         if not task_name:
             console.print("[yellow]Skipping task without name[/yellow]")
             continue
+
+        # Apply default metadata (only for fields not explicitly set in task_data)
+        # For markdown files, missing metadata means defaults should apply
+        for key, default_value in default_metadata.items():
+            # Only apply default if field is not set or is still at its default value
+            if key == "tag" and task_data.get("tag") == "default":
+                task_data["tag"] = default_value
+            elif key == "status" and task_data.get("status") == "new":
+                task_data["status"] = default_value
+            elif key == "priority" and task_data.get("priority", 0) == 0:
+                task_data["priority"] = default_value
+            elif key == "size" and task_data.get("size", "U") == "U":
+                task_data["size"] = default_value
+            elif key == "reminder" and not task_data.get("reminder"):
+                task_data["reminder"] = default_value
+            elif key not in task_data or task_data[key] is None:
+                task_data[key] = default_value
 
         # Check if this is an update (has 'id' field)
         task_id = task_data.get("id")

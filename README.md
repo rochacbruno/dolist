@@ -34,6 +34,7 @@ optionally use your Dropbox to store the database
 - **Systemd Integration** for automatic reminder service
 - **Multiple Databases** support
 - **Stdin Support** for adding tasks and notes from pipes and files
+- **Import/Export** tasks from/to Markdown and JSON with default metadata support
 - **Metrics & Reporting** with interactive charts and JSON export
 
 ## Requirements
@@ -207,6 +208,7 @@ dolist 3 start                   # Start working on task 3
 dolist 4                         # Edit task 4 interactively
 echo "Note" | dolist 5 note      # Add note from stdin
 cat task.txt | dolist add        # Add task with notes from file
+dolist import-tasks tasks.md --default "tag=work priority=5"  # Import tasks with defaults
 ```
 
 ### Command Reference
@@ -265,6 +267,7 @@ Core Commands:
   dolist <id> <action>     # Perform action on task
   dolist add "Task"        # Add a new task
   dolist ls [OPTIONS]      # List tasks
+  dolist import-tasks FILE # Import tasks from markdown or JSON
   dolist shell             # Start Python REPL
   dolist service           # Manage reminder service
   dolist reset             # Reset database (with backup)
@@ -689,7 +692,125 @@ This command will:
 
 The backup file is stored in the same directory as your database (`~/.config/dolist/` by default).
 
-#### 8. Task Dependencies
+#### 8. Import Tasks from Markdown or JSON
+
+DoList can import tasks from markdown or JSON files, making it easy to batch-create tasks or migrate from other systems.
+
+**Basic Import from Markdown:**
+
+```bash
+# Import tasks from a markdown file
+dolist import-tasks tasks.md
+
+# Import from JSON
+dolist import-tasks tasks.json
+```
+
+**Markdown Format:**
+
+Tasks are defined with headings (`#`), with optional metadata and notes:
+
+```markdown
+# Task name
+
+Optional description (becomes first note)
+
+- Note item 1
+- Note item 2
+
+> tag work
+> status in-progress
+> priority 7
+> size L
+> reminder tomorrow
+
+# Another task
+
+Another description
+
+> tag personal
+```
+
+**Using Default Metadata:**
+
+Apply default values to all tasks that don't have specific metadata in the file:
+
+```bash
+# Apply defaults for tag, priority, reminder, and size
+dolist import-tasks tasks.md --default "tag=foo priority=5 reminder=3 days size=L"
+
+# Apply only some defaults
+dolist import-tasks tasks.md --default "tag=work priority=3"
+```
+
+**Default Metadata Behavior:**
+- Defaults are only applied to fields not explicitly set in the file
+- If a task has metadata in the file (e.g., `> tag custom`), it overrides the default
+- Supported default fields: `tag`, `status`, `priority`, `size`, `reminder`
+
+**Example:**
+
+Given a file `tasks.md`:
+```markdown
+# Task 1
+
+Description for task 1
+
+# Task 2
+
+Description for task 2
+
+> priority 7
+
+# Task 3
+
+Description for task 3
+
+> tag hello
+```
+
+Import with defaults:
+```bash
+dolist import-tasks tasks.md --default "tag=foo priority=5 size=L"
+```
+
+Result:
+- **Task 1**: Uses defaults → `tag=foo`, `priority=5`, `size=L`
+- **Task 2**: Overrides priority → `tag=foo`, `priority=7` (from file), `size=L`
+- **Task 3**: Overrides tag → `tag=hello` (from file), `priority=5`, `size=L`
+
+**JSON Format:**
+
+JSON files should contain an array of task objects:
+
+```json
+[
+  {
+    "name": "Task name",
+    "tag": "work",
+    "status": "new",
+    "priority": 5,
+    "size": "M",
+    "reminder": "tomorrow",
+    "notes": ["Note 1", "Note 2"]
+  }
+]
+```
+
+**Updating Existing Tasks:**
+
+If a task in the import file has an `id` field, it will update the existing task:
+
+```markdown
+# Updated task name
+
+> id 123
+> tag updated
+```
+
+This is useful for exporting, editing, and re-importing tasks.
+
+#### 9. Task Dependencies
 
 DoList supports task dependencies through special markers in task notes. This allows you to:
 - Block tasks until prerequisites are complete
